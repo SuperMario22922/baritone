@@ -18,8 +18,10 @@
 package baritone.process;
 
 import baritone.Baritone;
+import baritone.api.BaritoneAPI;
 import baritone.api.pathing.goals.Goal;
 import baritone.api.pathing.goals.GoalBlock;
+import baritone.api.pathing.goals.GoalGetToBlock;
 import baritone.api.pathing.goals.GoalComposite;
 import baritone.api.process.IFarmProcess;
 import baritone.api.process.PathingCommand;
@@ -118,6 +120,7 @@ public final class FarmProcess extends BaritoneProcessHelper implements IFarmPro
         PUMPKIN(Blocks.PUMPKIN, state -> true),
         MELON(Blocks.MELON_BLOCK, state -> true),
         NETHERWART(Blocks.NETHER_WART, state -> state.getValue(BlockNetherWart.AGE) >= 3),
+        COCOA(Blocks.COCOA, state -> state.getValue(BlockCocoa.AGE) >= 2),
         SUGARCANE(Blocks.REEDS, null) {
             @Override
             public boolean readyToHarvest(World world, BlockPos pos, IBlockState state) {
@@ -175,6 +178,10 @@ public final class FarmProcess extends BaritoneProcessHelper implements IFarmPro
         return !stack.isEmpty() && stack.getItem().equals(Items.NETHER_WART);
     }
 
+    private boolean isCocoa(ItemStack stack) {
+        return !stack.isEmpty() && stack.getItem() instanceof ItemDye && EnumDyeColor.byDyeDamage(stack.getMetadata()) == EnumDyeColor.BROWN;
+    }
+
     @Override
     public PathingCommand onTick(boolean calcFailed, boolean isSafeToCancel) {
         ArrayList<Block> scan = new ArrayList<>();
@@ -183,13 +190,14 @@ public final class FarmProcess extends BaritoneProcessHelper implements IFarmPro
         }
         if (Baritone.settings().replantCrops.value) {
             scan.add(Blocks.FARMLAND);
+            scan.add(Blocks.LOG);
             if (Baritone.settings().replantNetherWart.value) {
                 scan.add(Blocks.SOUL_SAND);
             }
         }
 
         if (Baritone.settings().mineGoalUpdateInterval.value != 0 && tickCount++ % Baritone.settings().mineGoalUpdateInterval.value == 0) {
-            Baritone.getExecutor().execute(() -> locations = WorldScanner.INSTANCE.scanChunkRadius(ctx, scan, 256, 10, 10));
+            Baritone.getExecutor().execute(() -> locations = BaritoneAPI.getProvider().getWorldScanner().scanChunkRadius(ctx, scan, 256, 10, 10));
         }
         if (locations == null) {
             return new PathingCommand(null, PathingCommandType.REQUEST_PAUSE);
@@ -198,6 +206,7 @@ public final class FarmProcess extends BaritoneProcessHelper implements IFarmPro
         List<BlockPos> openFarmland = new ArrayList<>();
         List<BlockPos> bonemealable = new ArrayList<>();
         List<BlockPos> openSoulsand = new ArrayList<>();
+        List<BlockPos> openLog = new ArrayList<>();
         for (BlockPos pos : locations) {
             //check if the target block is out of range.
             if (range != 0 && pos.getDistance(center.getX(), center.getY(), center.getZ()) > range) {
@@ -215,6 +224,19 @@ public final class FarmProcess extends BaritoneProcessHelper implements IFarmPro
             if (state.getBlock() == Blocks.SOUL_SAND) {
                 if (airAbove) {
                     openSoulsand.add(pos);
+                }
+                continue;
+            }
+            if (state.getBlock() == Blocks.LOG) {
+                // yes, both log blocks and the planks block define separate properties but share the enum
+                if (state.getValue(BlockOldLog.VARIANT) != BlockPlanks.EnumType.JUNGLE) {
+                    continue;
+                }
+                for (EnumFacing direction : EnumFacing.Plane.HORIZONTAL) {
+                    if (ctx.world().getBlockState(pos.offset(direction)).getBlock() instanceof BlockAir) {
+                        openLog.add(pos);
+                        break;
+                    }
                 }
                 continue;
             }
@@ -246,7 +268,7 @@ public final class FarmProcess extends BaritoneProcessHelper implements IFarmPro
         both.addAll(openSoulsand);
         for (BlockPos pos : both) {
             boolean soulsand = openSoulsand.contains(pos);
-            Optional<Rotation> rot = RotationUtils.reachableOffset(ctx.player(), pos, new Vec3d(pos.getX() + 0.5, pos.getY() + 1, pos.getZ() + 0.5), ctx.playerController().getBlockReachDistance(), false);
+            Optional<Rotation> rot = RotationUtils.reachableOffset(ctx, pos, new Vec3d(pos.getX() + 0.5, pos.getY() + 1, pos.getZ() + 0.5), ctx.playerController().getBlockReachDistance(), false);
             if (rot.isPresent() && isSafeToCancel && baritone.getInventoryBehavior().throwaway(true, soulsand ? this::isNetherWart : this::isPlantable)) {
                 RayTraceResult result = RayTraceUtils.rayTraceTowards(ctx.player(), rot.get(), ctx.playerController().getBlockReachDistance());
                 if (result.typeOfHit == RayTraceResult.Type.BLOCK && result.sideHit == EnumFacing.UP) {
@@ -255,6 +277,25 @@ public final class FarmProcess extends BaritoneProcessHelper implements IFarmPro
                         baritone.getInputOverrideHandler().setInputForceState(Input.CLICK_RIGHT, true);
                     }
                     return new PathingCommand(null, PathingCommandType.REQUEST_PAUSE);
+                }
+            }
+        }
+        for (BlockPos pos : openLog) {
+            for (EnumFacing dir : EnumFacing.Plane.HORIZONTAL) {
+                if (!(ctx.world().getBlockState(pos.offset(dir)).getBlock() instanceof BlockAir)) {
+                    continue;
+                }
+                Vec3d faceCenter = new Vec3d(pos).add(0.5, 0.5, 0.5).add(new Vec3d(dir.getDirectionVec()).scale(0.5));
+                Optional<Rotation> rot = RotationUtils.reachableOffset(ctx, pos, faceCenter, ctx.playerController().getBlockReachDistance(), false);
+                if (rot.isPresent() && isSafeToCancel && baritone.getInventoryBehavior().throwaway(true, this::isCocoa)) {
+                    RayTraceResult result = RayTraceUtils.rayTraceTowards(ctx.player(), rot.get(), ctx.playerController().getBlockReachDistance());
+                    if (result.typeOfHit == RayTraceResult.Type.BLOCK && result.sideHit == dir) {
+                        baritone.getLookBehavior().updateTarget(rot.get(), true);
+                        if (ctx.isLookingAt(pos)) {
+                            baritone.getInputOverrideHandler().setInputForceState(Input.CLICK_RIGHT, true);
+                        }
+                        return new PathingCommand(null, PathingCommandType.REQUEST_PAUSE);
+                    }
                 }
             }
         }
@@ -292,6 +333,15 @@ public final class FarmProcess extends BaritoneProcessHelper implements IFarmPro
                 goalz.add(new GoalBlock(pos.up()));
             }
         }
+        if (baritone.getInventoryBehavior().throwaway(false, this::isCocoa)) {
+            for (BlockPos pos : openLog) {
+                for (EnumFacing direction : EnumFacing.Plane.HORIZONTAL) {
+                    if (ctx.world().getBlockState(pos.offset(direction)).getBlock() instanceof BlockAir) {
+                        goalz.add(new GoalGetToBlock(pos.offset(direction)));
+                    }
+                }
+            }
+        }
         if (baritone.getInventoryBehavior().throwaway(false, this::isBoneMeal)) {
             for (BlockPos pos : bonemealable) {
                 goalz.add(new GoalBlock(pos));
@@ -300,7 +350,7 @@ public final class FarmProcess extends BaritoneProcessHelper implements IFarmPro
         for (Entity entity : ctx.world().loadedEntityList) {
             if (entity instanceof EntityItem && entity.onGround) {
                 EntityItem ei = (EntityItem) entity;
-                if (PICKUP_DROPPED.contains(ei.getItem().getItem())) {
+                if (PICKUP_DROPPED.contains(ei.getItem().getItem()) || isCocoa(ei.getItem())) {
                     // +0.1 because of farmland's 0.9375 dummy height lol
                     goalz.add(new GoalBlock(new BlockPos(entity.posX, entity.posY + 0.1, entity.posZ)));
                 }

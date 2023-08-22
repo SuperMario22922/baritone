@@ -101,6 +101,10 @@ public class MovementPillar extends Movement {
             // if we're standing on water and assumeWalkOnWater is false, we must have ascended to here, or sneak backplaced, so it is possible to pillar again
             return COST_INF;
         }
+        if ((from == Blocks.WATERLILY || from == Blocks.CARPET) && fromDown.getBlock() instanceof BlockLiquid) {
+            // to ascend here we'd have to break the block we are standing on
+            return COST_INF;
+        }
         double hardness = MovementHelper.getMiningDurationTicks(context, x, y + 2, z, toBreak, true);
         if (hardness >= COST_INF) {
             return COST_INF;
@@ -186,9 +190,9 @@ public class MovementPillar extends Movement {
         boolean vine = fromDown.getBlock() == Blocks.VINE;
         Rotation rotation = RotationUtils.calcRotationFromVec3d(ctx.playerHead(),
                 VecUtils.getBlockPosCenter(positionToPlace),
-                new Rotation(ctx.player().rotationYaw, ctx.player().rotationPitch));
+                ctx.playerRotations());
         if (!ladder) {
-            state.setTarget(new MovementState.MovementTarget(new Rotation(ctx.player().rotationYaw, rotation.getPitch()), true));
+            state.setTarget(new MovementState.MovementTarget(ctx.playerRotations().withPitch(rotation.getPitch()), true));
         }
 
         boolean blockIsThere = MovementHelper.canWalkOn(ctx, src) || ladder;
@@ -247,7 +251,7 @@ public class MovementPillar extends Movement {
                 Block fr = frState.getBlock();
                 // TODO: Evaluate usage of getMaterial().isReplaceable()
                 if (!(fr instanceof BlockAir || frState.getMaterial().isReplaceable())) {
-                    RotationUtils.reachable(ctx.player(), src, ctx.playerController().getBlockReachDistance())
+                    RotationUtils.reachable(ctx, src, ctx.playerController().getBlockReachDistance())
                             .map(rot -> new MovementState.MovementTarget(rot, true))
                             .ifPresent(state::setTarget);
                     state.setInput(Input.JUMP, false); // breaking is like 5x slower when you're jumping

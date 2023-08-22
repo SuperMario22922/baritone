@@ -18,6 +18,7 @@
 package baritone.process;
 
 import baritone.Baritone;
+import baritone.api.BaritoneAPI;
 import baritone.api.pathing.goals.*;
 import baritone.api.process.IMineProcess;
 import baritone.api.process.PathingCommand;
@@ -28,7 +29,6 @@ import baritone.cache.CachedChunk;
 import baritone.cache.WorldScanner;
 import baritone.pathing.movement.CalculationContext;
 import baritone.pathing.movement.MovementHelper;
-import baritone.pathing.precompute.PrecomputedData;
 import baritone.utils.BaritoneProcessHelper;
 import baritone.utils.BlockStateInterface;
 import net.minecraft.block.Block;
@@ -215,6 +215,7 @@ public final class MineProcess extends BaritoneProcessHelper implements IMinePro
                 public boolean isInGoal(int x, int y, int z) {
                     return false;
                 }
+
                 @Override
                 public double heuristic() {
                     return Double.NEGATIVE_INFINITY;
@@ -318,6 +319,26 @@ public final class MineProcess extends BaritoneProcessHelper implements IMinePro
             int zDiff = z - this.z;
             return GoalBlock.calculate(xDiff, yDiff < -1 ? yDiff + 2 : yDiff == -1 ? 0 : yDiff, zDiff);
         }
+
+        @Override
+        public boolean equals(Object o) {
+            return super.equals(o);
+        }
+
+        @Override
+        public int hashCode() {
+            return super.hashCode() * 393857768;
+        }
+
+        @Override
+        public String toString() {
+            return String.format(
+                    "GoalThreeBlocks{x=%s,y=%s,z=%s}",
+                    SettingsUtil.maybeCensor(x),
+                    SettingsUtil.maybeCensor(y),
+                    SettingsUtil.maybeCensor(z)
+            );
+        }
     }
 
     public List<BlockPos> droppedItemsScan() {
@@ -361,7 +382,7 @@ public final class MineProcess extends BaritoneProcessHelper implements IMinePro
         locs = prune(ctx, locs, filter, max, blacklist, dropped);
 
         if (!untracked.isEmpty() || (Baritone.settings().extendCacheOnThreshold.value && locs.size() < max)) {
-            locs.addAll(WorldScanner.INSTANCE.scanChunkRadius(
+            locs.addAll(BaritoneAPI.getProvider().getWorldScanner().scanChunkRadius(
                     ctx.getBaritone().getPlayerContext(),
                     filter,
                     max,
@@ -396,7 +417,7 @@ public final class MineProcess extends BaritoneProcessHelper implements IMinePro
                     // is an x-ray and it'll get caught
                     if (filter.has(bsi.get0(x, y, z))) {
                         BlockPos pos = new BlockPos(x, y, z);
-                        if ((Baritone.settings().legitMineIncludeDiagonals.value && knownOreLocations.stream().anyMatch(ore -> ore.distanceSq(pos) <= 2 /* sq means this is pytha dist <= sqrt(2) */)) || RotationUtils.reachable(ctx.player(), pos, fakedBlockReachDistance).isPresent()) {
+                        if ((Baritone.settings().legitMineIncludeDiagonals.value && knownOreLocations.stream().anyMatch(ore -> ore.distanceSq(pos) <= 2 /* sq means this is pytha dist <= sqrt(2) */)) || RotationUtils.reachable(ctx, pos, fakedBlockReachDistance).isPresent()) {
                             knownOreLocations.add(pos);
                         }
                     }
@@ -435,6 +456,8 @@ public final class MineProcess extends BaritoneProcessHelper implements IMinePro
                 })
 
                 .filter(pos -> pos.getY() >= Baritone.settings().minYLevelWhileMining.value)
+
+                .filter(pos -> pos.getY() <= Baritone.settings().maxYLevelWhileMining.value)
 
                 .filter(pos -> !blacklist.contains(pos))
 
@@ -500,9 +523,9 @@ public final class MineProcess extends BaritoneProcessHelper implements IMinePro
         }
         if (!Baritone.settings().allowBreak.value) {
             BlockOptionalMetaLookup f = new BlockOptionalMetaLookup(this.filter.blocks()
-                .stream()
-                .filter(e -> Baritone.settings().allowBreakAnyway.value.contains(e.getBlock()))
-                .toArray(BlockOptionalMeta[]::new));
+                    .stream()
+                    .filter(e -> Baritone.settings().allowBreakAnyway.value.contains(e.getBlock()))
+                    .toArray(BlockOptionalMeta[]::new));
             if (f.blocks().isEmpty()) {
                 logDirect("Unable to mine when allowBreak is false and target block is not in allowBreakAnyway!");
                 return null;

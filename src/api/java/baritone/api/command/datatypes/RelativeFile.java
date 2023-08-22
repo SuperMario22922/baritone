@@ -19,6 +19,8 @@ package baritone.api.command.datatypes;
 
 import baritone.api.command.argument.IArgConsumer;
 import baritone.api.command.exception.CommandException;
+import baritone.api.utils.Helper;
+import net.minecraft.client.Minecraft;
 
 import java.io.File;
 import java.io.IOException;
@@ -83,18 +85,23 @@ public enum RelativeFile implements IDatatypePost<File, File> {
         boolean useParent = !currentPathStringThing.isEmpty() && !currentPathStringThing.endsWith(File.separator);
         File currentFile = currentPath.isAbsolute() ? currentPath.toFile() : new File(base, currentPathStringThing);
         return Stream.of(Objects.requireNonNull(getCanonicalFileUnchecked(
-                useParent
-                        ? currentFile.getParentFile()
-                        : currentFile
-        ).listFiles()))
+                        useParent
+                                ? currentFile.getParentFile()
+                                : currentFile
+                ).listFiles()))
                 .map(f -> (currentPath.isAbsolute() ? f : basePath.relativize(f.toPath()).toString()) +
                         (f.isDirectory() ? File.separator : ""))
                 .filter(s -> s.toLowerCase(Locale.US).startsWith(currentPathStringThing.toLowerCase(Locale.US)))
                 .filter(s -> !s.contains(" "));
     }
 
+    @Deprecated
     public static File gameDir() {
-        File gameDir = HELPER.mc.gameDir.getAbsoluteFile();
+        return gameDir(Helper.mc);
+    }
+
+    public static File gameDir(Minecraft mc) {
+        File gameDir = mc.gameDir.getAbsoluteFile();
         if (gameDir.getName().equals(".")) {
             return gameDir.getParentFile();
         }
